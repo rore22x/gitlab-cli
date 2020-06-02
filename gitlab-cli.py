@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[ ]:
-
 
 import os
 import requests 
@@ -13,11 +11,7 @@ import json
 from tabulate import tabulate
 
 
-# In[ ]:
-
-
-def main():
-    args = sys.argv
+def main(args):
     d = createDeligator()
     d.translate(args)
     
@@ -28,9 +22,6 @@ def createDeligator():
     executor = GitLab(requestFactory, resources)
     
     return Command(executor)
-
-
-# In[ ]:
 
 
 class Configuration(object):
@@ -54,9 +45,6 @@ class Configuration(object):
     
     def getProjectId(self):
         return self._projectId
-
-
-# In[ ]:
 
 
 class GitlabResources(object):
@@ -104,10 +92,6 @@ class GitlabResources(object):
     
     def getIssueNotes(self, issueId):
         return self.address + "/issues/{}/notes?sort=asc".format(issueId)
-    
-
-
-# In[ ]:
 
 
 class RequestFactory(object):
@@ -127,10 +111,6 @@ class RequestFactory(object):
     def put(self, endpoint):
         r = requests.put(url = endpoint,         headers = {'private-token': '{}'.format(self.config.getToken())})
         return r
-
-
-# In[ ]:
-
 
 class GitLab(object):
 
@@ -294,10 +274,7 @@ class GitLab(object):
             author = note["author"]["username"]
             body = note["body"]
             print("--------\nauthor {}: {}".format(author, body))
-        
-
-
-# In[ ]:
+    
 
 
 class Command(object):
@@ -363,15 +340,6 @@ class Command(object):
         print(c)
 
 
-# In[ ]:
 
-
-main()
-
-
-# In[ ]:
-
-
-d = createDeligator()
-d.translate(["f", "pipes"])
+main(sys.argv)
 
