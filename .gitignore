@@ -1,0 +1,11 @@
+/__pycache__/
+/etc
+/include
+/lib
+/share
+/bin
+/.ipynb_checkpoints
+
+/configuration.json
+/todo.md
+
