@@ -26,7 +26,9 @@ def createDeligator():
     address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
             configuration.getApiVersion(),\
             configuration.getProjectId())
-    apis.append(BranchApi(address, requestFactory))
+    apis.append(BranchApi())
+    for api in apis:
+        api.setup(address, requestFactory)
     
     return Command(executor, apis)
 
@@ -321,16 +323,28 @@ class ApiArg(object):
         else:
             return ""
 
-class BranchApi(object):
+class Api(object):
 
-    def __init__(self, address, requestFactory):
+    def setup(self, address, requestFactory):
         self.address = address
         self.requestFactory = requestFactory
         self._params = [ApiArg("search"), ApiArg("id")]
         self._command = "branches"
 
     def match(self, command):
-        return command == self._command
+        return command == self._command   
+
+    def execute(self, args):
+        pass
+
+    def help(self):
+        args = []
+        for param in self._params:
+            args.append("" + param.getToken())
+        print("Check arguments:\n{} {}".format(self._command, args))
+
+
+class BranchApi(Api):
 
     def execute(self, args):
         # args: id, search
@@ -344,7 +358,6 @@ class BranchApi(object):
             if not matched:
                 self.help()
                 return
-
 
         branches = self.requestFactory.get(self.api()).json()
         
@@ -368,13 +381,6 @@ class BranchApi(object):
             if var != "":
                 args += "&" + var
         return self.address + "/repository/branches{}".format(args)
-
-    def help(self):
-        
-        args = []
-        for param in self._params:
-            args.append("" + param.getToken())
-        print("Check arguments:\n{} {}".format(self._command, args))
 
 
 class Command(object):
