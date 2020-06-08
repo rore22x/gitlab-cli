@@ -20,8 +20,15 @@ def createDeligator():
     requestFactory = RequestFactory(configuration)
     resources = GitlabResources(configuration)
     executor = GitLab(requestFactory, resources)
+
+    # init apis
+    apis = []
+    address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
+            configuration.getApiVersion(),\
+            configuration.getProjectId())
+    apis.append(BranchApi(address, requestFactory))
     
-    return Command(executor)
+    return Command(executor, apis)
 
 
 class Configuration(object):
@@ -50,7 +57,9 @@ class Configuration(object):
 class GitlabResources(object):
     
     def __init__(self, configuration):
-        self.address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),                                                      configuration.getApiVersion(),                                                      configuration.getProjectId())
+        self.address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
+            configuration.getApiVersion(),\
+            configuration.getProjectId())
 
     def getIssueWithLabels(self, labels):
         labels = ",".join(labels)
@@ -281,10 +290,98 @@ class GitLab(object):
             print("--------\nauthor {}: {}".format(author, body))
 
 
+class ApiArg(object):
+
+    def __init__(self, token, transform = None):
+        self._token = "-{}=".format(token)
+        if transform == None:
+            self._transform = token
+        else:
+            self._transform = transform
+        self._value = None
+
+    def match(self, arg):
+        return arg.startswith(self._token)
+
+    def getToken(self):
+        return self._token
+
+    def fetch(self, arg):
+        if self.match(arg):
+            self._value = self._setValue(arg)
+            return True
+        return False
+
+    def _setValue(self, arg):
+        return arg.replace(self._token, "")
+
+    def transform(self):
+        if self._value is not None:
+            return "{}={}".format(self._transform, self._value)
+        else:
+            return ""
+
+class BranchApi(object):
+
+    def __init__(self, address, requestFactory):
+        self.address = address
+        self.requestFactory = requestFactory
+        self._params = [ApiArg("search"), ApiArg("id")]
+        self._command = "branches"
+
+    def match(self, command):
+        return command == self._command
+
+    def execute(self, args):
+        # args: id, search
+        
+        for arg in args:
+            matched = False
+            for param in self._params:
+                matched = param.fetch(arg)
+                if matched:
+                    break
+            if not matched:
+                self.help()
+                return
+
+
+        branches = self.requestFactory.get(self.api()).json()
+        
+        rows = []
+        for branch in branches:
+            name = branch["name"]
+            merged = branch["merged"]
+            authorName = branch["commit"]["author_name"]
+            commitTitle = branch["commit"]["title"]
+            commitShort = branch["commit"]["short_id"]
+            row = [name, merged, authorName, commitTitle, commitShort]
+            rows.append(row)
+
+        print(tabulate(rows, headers = ["name", "merged", "author", "commit", "hash"]))
+
+
+    def api(self):
+        args = "?"
+        for param in self._params:
+            var = param.transform()
+            if var != "":
+                args += "&" + var
+        return self.address + "/repository/branches{}".format(args)
+
+    def help(self):
+        
+        args = []
+        for param in self._params:
+            args.append("" + param.getToken())
+        print("Check arguments:\n{} {}".format(self._command, args))
+
+
 class Command(object):
     
-    def __init__(self, gitlab):
+    def __init__(self, gitlab, apis):
         self.executer = gitlab
+        self.apis = apis
         
     def translate(self, args):
         if len(args) < 2:
@@ -329,9 +426,18 @@ class Command(object):
             self.executer.printIssue(args[0])
         elif command == "-h" or command == "help":
             self.overview()
+        elif self.mapApi(command, args):
+            print("\n")
         else:
             print("Command not supplied: {}\n\n".format(command))
             self.overview()
+
+    def mapApi(self, command, args):
+        for api in self.apis:
+            if api.match(command):
+                api.execute(args)
+                return True
+        return False
             
     def overview(self):
         c = "Help\n\n"
