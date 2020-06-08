@@ -72,11 +72,11 @@ class GitlabResources(object):
     def putAssignIssue(self, issueId, userId):
         return self.address + "/issues/{}?assignee_ids={}".format(issueId, userId)
     
-    def getPipelinesByUsername(self, username):
-        return self.address + "/pipelines?username={}".format(username)
-    
-    def getPipelines(self):
-        return self.address + "/pipelines"
+    def getPipelines(self, username = None, sort = "desc"):
+        args = "sort={}".format(sort)
+        if username is not None:
+            args += "&username={}".format(username)
+        return self.address + "/pipelines?{}".format(args)
     
     def getProjectBoards(self):
         return self.address + "/boards"
@@ -207,11 +207,8 @@ class GitLab(object):
         answer = self.requestFactory.put(self.res.putAssignIssue(issueId, "0"))
         print(answer.json())
         
-    def printPipelines(self, username = None):
-        if username is not None:
-            answer = self.requestFactory.get(self.res.getPipelinesByUsername(username))
-        else:
-            answer = self.requestFactory.get(self.res.getPipelines())
+    def printPipelines(self, username = None, sort = "desc"):
+        answer = self.requestFactory.get(self.res.getPipelines(username = username, sort = sort))
 
         pipelines = answer.json()
         rows = []
@@ -237,9 +234,11 @@ class GitLab(object):
             webUrl = mr["web_url"]
             upVotes = mr["upvotes"]
             userNotesCount = mr["user_notes_count"]
-            rows.append([iid, upVotes, title, author, userNotesCount, workInProgress, mergeStatus, webUrl])
+            row = [iid, upVotes, title, author, userNotesCount, workInProgress, mergeStatus, webUrl]
+            row = [self.lineBreak(x, 30) for x in row]
+            rows.append(row)
         
-        print(tabulate(rows, headers=["id", "upVotes", "title", "author", "notes", "wip" , "status", "url"], tablefmt="github"))
+        print(tabulate(rows, headers=["id", "👍", "title", "author", "notes", "wip" , "status", "url"], tablefmt="simple"))
         
     def printMergeRequest(self, mrId):
         answer = self.requestFactory.get(self.res.getMergeRequest(mrId)).json()
@@ -259,6 +258,8 @@ class GitLab(object):
             print("--------\nauthor {}: {}".format(author, body))
         
     def lineBreak(self, text, chars):
+        if type(text) is not str:
+            return text
         for i in range(len(text)):
             if i > 0 and i % chars == 0:
                 text = text[0:i] + "\n" + text[i:len(text)]
@@ -267,14 +268,17 @@ class GitLab(object):
     
     def printIssue(self, issueId):
         answer = self.requestFactory.get(self.res.getIssueById(issueId, False)).json()
-        description = answer["description"]
-        
         notes = self.requestFactory.get(self.res.getIssueNotes(issueId)).json()
+        
+        description = answer["description"] 
+        labels = answer["labels"]
+        print("* Description: {}".format(description))
+        print("* Lables: {}".format(labels))
+        print("* State: {}".format(answer["state"]))
         for note in notes:
             author = note["author"]["username"]
             body = note["body"]
             print("--------\nauthor {}: {}".format(author, body))
-    
 
 
 class Command(object):
@@ -283,6 +287,10 @@ class Command(object):
         self.executer = gitlab
         
     def translate(self, args):
+        if len(args) < 2:
+            print("\nNo command given\n")
+            self.overview()
+            return
         c = args[1]
         r = args[2:len(args)]
         self.mapCommand(c, r)
@@ -333,7 +341,7 @@ class Command(object):
         c += "list #labelname ?username  - list issues with #labelname by ?username \n"
         c += "assign #issue #username - assign #issue to #username\n"
         c += "unassign #issueId  - unassign all users from #issueId \n"
-        c += "pipes #username  - list pipelines by #username\n"
+        c += "pipes ?username  - list pipelines by #username\n"
         c += "mv #issue #labelname  - set #labelname to #issue\n"
         c += "delready #listname  - remove Ready label from list #listname \n"
         c += "mr ?mergeRequestId - (1) list all open merge requests. (2) show merge request with ?mergeRequestId\n"
