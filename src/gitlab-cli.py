@@ -20,8 +20,17 @@ def createDeligator():
     requestFactory = RequestFactory(configuration)
     resources = GitlabResources(configuration)
     executor = GitLab(requestFactory, resources)
+
+    # init apis
+    apis = []
+    address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
+            configuration.getApiVersion(),\
+            configuration.getProjectId())
+    apis.append(BranchApi())
+    for api in apis:
+        api.setup(address, requestFactory)
     
-    return Command(executor)
+    return Command(executor, apis)
 
 
 class Configuration(object):
@@ -50,7 +59,9 @@ class Configuration(object):
 class GitlabResources(object):
     
     def __init__(self, configuration):
-        self.address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),                                                      configuration.getApiVersion(),                                                      configuration.getProjectId())
+        self.address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
+            configuration.getApiVersion(),\
+            configuration.getProjectId())
 
     def getIssueWithLabels(self, labels):
         labels = ",".join(labels)
@@ -72,11 +83,11 @@ class GitlabResources(object):
     def putAssignIssue(self, issueId, userId):
         return self.address + "/issues/{}?assignee_ids={}".format(issueId, userId)
     
-    def getPipelinesByUsername(self, username):
-        return self.address + "/pipelines?username={}".format(username)
-    
-    def getPipelines(self):
-        return self.address + "/pipelines"
+    def getPipelines(self, username = None, sort = "desc"):
+        args = "sort={}".format(sort)
+        if username is not None:
+            args += "&username={}".format(username)
+        return self.address + "/pipelines?{}".format(args)
     
     def getProjectBoards(self):
         return self.address + "/boards"
@@ -207,11 +218,8 @@ class GitLab(object):
         answer = self.requestFactory.put(self.res.putAssignIssue(issueId, "0"))
         print(answer.json())
         
-    def printPipelines(self, username = None):
-        if username is not None:
-            answer = self.requestFactory.get(self.res.getPipelinesByUsername(username))
-        else:
-            answer = self.requestFactory.get(self.res.getPipelines())
+    def printPipelines(self, username = None, sort = "desc"):
+        answer = self.requestFactory.get(self.res.getPipelines(username = username, sort = sort))
 
         pipelines = answer.json()
         rows = []
@@ -237,9 +245,11 @@ class GitLab(object):
             webUrl = mr["web_url"]
             upVotes = mr["upvotes"]
             userNotesCount = mr["user_notes_count"]
-            rows.append([iid, upVotes, title, author, userNotesCount, workInProgress, mergeStatus, webUrl])
+            row = [iid, upVotes, title, author, userNotesCount, workInProgress, mergeStatus, webUrl]
+            row = [self.lineBreak(x, 30) for x in row]
+            rows.append(row)
         
-        print(tabulate(rows, headers=["id", "upVotes", "title", "author", "notes", "wip" , "status", "url"], tablefmt="github"))
+        print(tabulate(rows, headers=["id", "👍", "title", "author", "notes", "wip" , "status", "url"], tablefmt="simple"))
         
     def printMergeRequest(self, mrId):
         answer = self.requestFactory.get(self.res.getMergeRequest(mrId)).json()
@@ -259,6 +269,8 @@ class GitLab(object):
             print("--------\nauthor {}: {}".format(author, body))
         
     def lineBreak(self, text, chars):
+        if type(text) is not str:
+            return text
         for i in range(len(text)):
             if i > 0 and i % chars == 0:
                 text = text[0:i] + "\n" + text[i:len(text)]
@@ -267,22 +279,121 @@ class GitLab(object):
     
     def printIssue(self, issueId):
         answer = self.requestFactory.get(self.res.getIssueById(issueId, False)).json()
-        description = answer["description"]
-        
         notes = self.requestFactory.get(self.res.getIssueNotes(issueId)).json()
+        
+        description = answer["description"] 
+        labels = answer["labels"]
+        print("* Description: {}".format(description))
+        print("* Lables: {}".format(labels))
+        print("* State: {}".format(answer["state"]))
         for note in notes:
             author = note["author"]["username"]
             body = note["body"]
             print("--------\nauthor {}: {}".format(author, body))
-    
+
+
+class ApiArg(object):
+
+    def __init__(self, token, transform = None):
+        self._token = "-{}=".format(token)
+        if transform == None:
+            self._transform = token
+        else:
+            self._transform = transform
+        self._value = None
+
+    def match(self, arg):
+        return arg.startswith(self._token)
+
+    def getToken(self):
+        return self._token
+
+    def fetch(self, arg):
+        if self.match(arg):
+            self._value = self._setValue(arg)
+            return True
+        return False
+
+    def _setValue(self, arg):
+        return arg.replace(self._token, "")
+
+    def transform(self):
+        if self._value is not None:
+            return "{}={}".format(self._transform, self._value)
+        else:
+            return ""
+
+class Api(object):
+
+    def setup(self, address, requestFactory):
+        self.address = address
+        self.requestFactory = requestFactory
+        self._params = [ApiArg("search"), ApiArg("id")]
+        self._command = "branches"
+
+    def match(self, command):
+        return command == self._command   
+
+    def execute(self, args):
+        pass
+
+    def help(self):
+        args = []
+        for param in self._params:
+            args.append("" + param.getToken())
+        print("Check arguments:\n{} {}".format(self._command, args))
+
+
+class BranchApi(Api):
+
+    def execute(self, args):
+        # args: id, search
+        
+        for arg in args:
+            matched = False
+            for param in self._params:
+                matched = param.fetch(arg)
+                if matched:
+                    break
+            if not matched:
+                self.help()
+                return
+
+        branches = self.requestFactory.get(self.api()).json()
+        
+        rows = []
+        for branch in branches:
+            name = branch["name"]
+            merged = branch["merged"]
+            authorName = branch["commit"]["author_name"]
+            commitTitle = branch["commit"]["title"]
+            commitShort = branch["commit"]["short_id"]
+            row = [name, merged, authorName, commitTitle, commitShort]
+            rows.append(row)
+
+        print(tabulate(rows, headers = ["name", "merged", "author", "commit", "hash"]))
+
+
+    def api(self):
+        args = "?"
+        for param in self._params:
+            var = param.transform()
+            if var != "":
+                args += "&" + var
+        return self.address + "/repository/branches{}".format(args)
 
 
 class Command(object):
     
-    def __init__(self, gitlab):
+    def __init__(self, gitlab, apis):
         self.executer = gitlab
+        self.apis = apis
         
     def translate(self, args):
+        if len(args) < 2:
+            print("\nNo command given\n")
+            self.overview()
+            return
         c = args[1]
         r = args[2:len(args)]
         self.mapCommand(c, r)
@@ -321,9 +432,18 @@ class Command(object):
             self.executer.printIssue(args[0])
         elif command == "-h" or command == "help":
             self.overview()
+        elif self.mapApi(command, args):
+            print("\n")
         else:
             print("Command not supplied: {}\n\n".format(command))
             self.overview()
+
+    def mapApi(self, command, args):
+        for api in self.apis:
+            if api.match(command):
+                api.execute(args)
+                return True
+        return False
             
     def overview(self):
         c = "Help\n\n"
@@ -333,7 +453,7 @@ class Command(object):
         c += "list #labelname ?username  - list issues with #labelname by ?username \n"
         c += "assign #issue #username - assign #issue to #username\n"
         c += "unassign #issueId  - unassign all users from #issueId \n"
-        c += "pipes #username  - list pipelines by #username\n"
+        c += "pipes ?username  - list pipelines by #username\n"
         c += "mv #issue #labelname  - set #labelname to #issue\n"
         c += "delready #listname  - remove Ready label from list #listname \n"
         c += "mr ?mergeRequestId - (1) list all open merge requests. (2) show merge request with ?mergeRequestId\n"
