@@ -11,6 +11,7 @@ import json
 from tabulate import tabulate
 
 
+
 def main(args):
     d = createDeligator()
     d.translate(args)
@@ -22,11 +23,10 @@ def createDeligator():
     executor = GitLab(requestFactory, resources)
 
     # init apis
-    apis = []
+    apis = [BranchApi(), PipelineApi()]
     address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
             configuration.getApiVersion(),\
             configuration.getProjectId())
-    apis.append(BranchApi())
     for api in apis:
         api.setup(address, requestFactory)
     
@@ -218,18 +218,7 @@ class GitLab(object):
         answer = self.requestFactory.put(self.res.putAssignIssue(issueId, "0"))
         print(answer.json())
         
-    def printPipelines(self, username = None, sort = "desc"):
-        answer = self.requestFactory.get(self.res.getPipelines(username = username, sort = sort))
 
-        pipelines = answer.json()
-        rows = []
-        for pip in pipelines:
-            pipId = pip["id"]
-            pipStatus = pip["status"]
-            pipRef = pip["ref"]
-            pipUrl = pip["web_url"]
-            rows.append([pipId, pipStatus, pipRef, pipUrl])
-        print(tabulate(rows, headers=['id', 'status', 'ref', 'url']))
         
     def printOpenMergeRequests(self):
         answer = self.requestFactory.get(self.res.getOpenMergeRequests()).json()
@@ -292,15 +281,23 @@ class GitLab(object):
             print("--------\nauthor {}: {}".format(author, body))
 
 
+class Printer(object):
+
+    def out(self, message):
+        print(message)
+
+
 class ApiArg(object):
 
-    def __init__(self, token, transform = None):
+    def __init__(self, token, transform = None, required = False, description = ""):
         self._token = "-{}=".format(token)
         if transform == None:
             self._transform = token
         else:
             self._transform = transform
         self._value = None
+        self._required = required
+        self._description = description
 
     def match(self, arg):
         return arg.startswith(self._token)
@@ -313,6 +310,15 @@ class ApiArg(object):
             self._value = self._setValue(arg)
             return True
         return False
+
+    def validate(self):
+        return not self._required or self._value is not None
+
+    def isRequired(self):
+        return self._required
+
+    def description(self):
+        return self._description
 
     def _setValue(self, arg):
         return arg.replace(self._token, "")
@@ -328,8 +334,11 @@ class Api(object):
     def setup(self, address, requestFactory):
         self.address = address
         self.requestFactory = requestFactory
-        self._params = [ApiArg("search"), ApiArg("id")]
-        self._command = "branches"
+        self._setup()
+
+    def _setup(self):
+        self._params = []
+        self._command = None
 
     def match(self, command):
         return command == self._command   
@@ -337,18 +346,7 @@ class Api(object):
     def execute(self, args):
         pass
 
-    def help(self):
-        args = []
-        for param in self._params:
-            args.append("" + param.getToken())
-        print("Check arguments:\n{} {}".format(self._command, args))
-
-
-class BranchApi(Api):
-
-    def execute(self, args):
-        # args: id, search
-        
+    def fetchParams(self, args):
         for arg in args:
             matched = False
             for param in self._params:
@@ -357,7 +355,64 @@ class BranchApi(Api):
                     break
             if not matched:
                 self.help()
-                return
+                return True
+        for param in self._params:
+            if not param.validate():
+                printer.out("Validation failure")
+                self.help()
+                return True
+        return False
+
+    def apiArgs(self):
+        args = "?"
+        for param in self._params:
+            var = param.transform()
+            if var != "":
+                args += "&" + var   
+        return args    
+
+    def help(self):
+        args = []
+        for param in self._params:
+            addition = ""
+            if param.isRequired():
+                addition += "[Req]"
+            args.append("{}{}[{}]".format(addition, param.getToken(), param.description()))
+        printer.out(" -> {} {}".format(self._command, args))
+
+class PipelineApi(Api):
+
+    def _setup(self):
+        self._params = [ApiArg("sort"), ApiArg("u", transform = "username", description="username")]
+        self._command = "pipes"
+
+    def execute(self, args):
+        if self.fetchParams(args):
+            return
+        answer = self.requestFactory.get(self.getPipelines())
+
+        pipelines = answer.json()
+        rows = []
+        for pip in pipelines:
+            pipId = pip["id"]
+            pipStatus = pip["status"]
+            pipRef = pip["ref"]
+            pipUrl = pip["web_url"]
+            rows.append([pipId, pipStatus, pipRef, pipUrl])
+        printer.out(tabulate(rows, headers=['id', 'status', 'ref', 'url']))
+
+    def getPipelines(self):
+        return self.address + "/pipelines{}".format(self.apiArgs())
+
+class BranchApi(Api):
+
+    def _setup(self):
+        self._params = [ApiArg("search"), ApiArg("id")]
+        self._command = "branches"
+
+    def execute(self, args):
+        # args: id, search
+        self.fetchParams(args)
 
         branches = self.requestFactory.get(self.api()).json()
         
@@ -371,16 +426,10 @@ class BranchApi(Api):
             row = [name, merged, authorName, commitTitle, commitShort]
             rows.append(row)
 
-        print(tabulate(rows, headers = ["name", "merged", "author", "commit", "hash"]))
-
+        printer.out(tabulate(rows, headers = ["name", "merged", "author", "commit", "hash"]))
 
     def api(self):
-        args = "?"
-        for param in self._params:
-            var = param.transform()
-            if var != "":
-                args += "&" + var
-        return self.address + "/repository/branches{}".format(args)
+        return self.address + "/repository/branches{}".format(self.apiArgs())
 
 
 class Command(object):
@@ -411,11 +460,6 @@ class Command(object):
         elif command == "unassign":
             assert len(args) >= 1, "unassign #issueId"
             self.executer.unassignIssue(args[0])
-        elif command == "pipes":
-            if len(args) >= 1:
-                self.executer.printPipelines(args[0])
-            else:
-                self.executer.printPipelines()
         elif command == "mv":
             assert len(args) >= 2, "mv #issue #labelname"
             self.executer.moveToPanel(args[0], args[1])
@@ -435,8 +479,9 @@ class Command(object):
         elif self.mapApi(command, args):
             print("\n")
         else:
-            print("Command not supplied: {}\n\n".format(command))
+            printer.out("Command not supplied: {}\n\n".format(command))
             self.overview()
+
 
     def mapApi(self, command, args):
         for api in self.apis:
@@ -458,8 +503,10 @@ class Command(object):
         c += "delready #listname  - remove Ready label from list #listname \n"
         c += "mr ?mergeRequestId - (1) list all open merge requests. (2) show merge request with ?mergeRequestId\n"
         print(c)
+        for api in self.apis:
+            api.help()
 
 
 
+printer = Printer()
 main(sys.argv)
-
