@@ -23,7 +23,7 @@ def createDeligator():
     executor = GitLab(requestFactory, resources)
 
     # init apis
-    apis = [BranchApi(), PipelineApi(), BoardApi()]
+    apis = [BranchApi(), PipelineApi(), BoardApi(), IssueMoveApi()]
     address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
             configuration.getApiVersion(),\
             configuration.getProjectId())
@@ -299,8 +299,14 @@ class Printer(object):
 
 class ApiArg(object):
 
-    def __init__(self, token, transform = None, required = False, description = ""):
-        self._token = "-{}=".format(token)
+    def getArgToken():
+        return "-"
+
+    def isTokenArg(arg):
+        return arg.startswith(ApiArg.getArgToken())
+
+    def __init__(self, token, transform = None, required = False, description = "", position = None):
+        self._token = "{}{}".format(ApiArg.getArgToken(), token)
         if transform == None:
             self._transform = token
         else:
@@ -308,6 +314,7 @@ class ApiArg(object):
         self._value = None
         self._required = required
         self._description = description
+        self._position = position
 
     def match(self, arg):
         return arg.startswith(self._token)
@@ -315,9 +322,12 @@ class ApiArg(object):
     def getToken(self):
         return self._token
 
-    def fetch(self, arg):
+    def fetch(self, arg, argPosition):
         if self.match(arg):
             self._value = self._setValue(arg)
+            return True
+        if self._position is not None and not ApiArg.isTokenArg(arg) and self._position == argPosition:
+            self._value = arg
             return True
         return False
 
@@ -331,7 +341,13 @@ class ApiArg(object):
         return self._description
 
     def _setValue(self, arg):
-        return arg.replace(self._token, "")
+        if arg.startswith(self._token + "="):
+            return arg.replace(self._token + "=", "")
+        else:
+            return arg.replace(self._token, "")
+
+    def getValue(self):
+        return self._value
 
     def transform(self):
         if self._value is not None:
@@ -344,7 +360,9 @@ class Api(object):
     def setup(self, address, requestFactory):
         self.address = address
         self.requestFactory = requestFactory
+        self.helpText = ""
         self._setup()
+    
 
     def _setup(self):
         self._params = []
@@ -357,10 +375,10 @@ class Api(object):
         pass
 
     def fetchParams(self, args):
-        for arg in args:
+        for argPosition, arg in enumerate(args):
             matched = False
             for param in self._params:
-                matched = param.fetch(arg)
+                matched = param.fetch(arg, argPosition)
                 if matched:
                     break
             if not matched:
@@ -388,7 +406,10 @@ class Api(object):
             if param.isRequired():
                 addition += "[Req]"
             args.append("{}{}[{}]".format(addition, param.getToken(), param.description()))
-        printer.out(" -> {} {}".format(self._command, args))
+        printer.out(" -> {} {} - {}".format(self._command, args, self.helpText))
+
+    def addHelp(self, text):
+        self.helpText += text
 
 class PipelineApi(Api):
 
@@ -441,6 +462,116 @@ class BranchApi(Api):
     def api(self):
         return self.address + "/repository/branches{}".format(self.apiArgs())
 
+class IssueMoveApi(Api):
+
+    def _setup(self):
+        self._params = [ApiArg("i", description = "issue id", position = 0, required = True), \
+                        ApiArg("s", description = "source list", position = 1, required = True), \
+                        ApiArg("t", description =  "target list", position = 2, required = True), \
+                        ApiArg("u", description =  "username"), \
+                        ApiArg("x", description = "unassign all users")]
+        self._command = "move"
+        self.addHelp("Move issue from list s to list t and assign to user u")
+
+    def execute(self, args):
+        if self.fetchParams(args):
+            return
+
+        issue = self._params[0].getValue()
+        source = self._params[1].getValue()
+        target = self._params[2].getValue()
+        assignUser = self._params[3].getValue() is not None
+        unassign = self._params[4].getValue() is not None
+
+        issueIdSaved = self.moveToPanel(issue, target)
+        if issueIdSaved is None:
+            return
+        if assignUser:
+            self.assignToUser(issueIdSaved, self._params[3].getValue())
+        if unassign:
+            self.unassignIssue(issueIdSaved)
+
+        issueAnswer = self.requestFactory.get(self._apiGetIssueById(issue, True)).json()
+        if "id" in issueAnswer:
+            title = issueAnswer["title"]
+            labels = issueAnswer["labels"]
+            assignees = [assignee["username"] for assignee in issueAnswer["assignees"]]
+            printer.out("Issue: {}\n -> labels: {}\n -> assignees: {}".format(title, labels, assignees))
+
+
+    def moveToPanel(self, issueId, labelName):
+        answer = self.requestFactory.get(self._apiGetProjectBoards())
+        allLabels = []
+        boards = answer.json()
+        for b in boards:
+            lists = b["lists"]
+            for list in lists:
+                allLabels.append(list["label"]["name"])
+            
+        if labelName not in allLabels:
+            printer.out("List {} not known.\nKnown lists {}".format(labelName, allLabels))
+            return
+        
+        # Get labels for issue, remove label of old board list and add new labelName
+        issueAnswer = self.requestFactory.get(self._apiGetIssueById(issueId, True)).json()
+        if "labels" not in issueAnswer:
+            printer.out("Failed to get labels for issue {}: {}".format(issueId, issueAnswer))
+            return
+
+        labels = issueAnswer["labels"]
+        for panelLabel in allLabels:
+            if panelLabel in labels:
+                labels.remove(panelLabel)
+        
+        labels.append(labelName)  
+        setLabelsAnswer = self.requestFactory.put(self._apiPutLabelsToIssue(issueId, labels)).json()
+        if "id" not in setLabelsAnswer:
+            printer.out("Failed to move issue {}".format(setLabelsAnswer))
+        return setLabelsAnswer["id"]
+            
+    def assignToUser(self, issueId, userName):
+        answer = self.requestFactory.get(self._apiGetUsersByName(userName))
+        users = answer.json()
+        
+        foundUser = None
+        for user in users:
+            if user["username"] == userName:
+                foundUser = user
+                break
+
+        if foundUser is None:
+            printer.out("User not found: '{}' registered?".format(userName))
+            return
+            
+        assignAnswer = self.requestFactory.put(self._apiPutAssignIssue(issueId, foundUser["id"])).json()
+        if "id" not in assignAnswer:
+            printer.out("Failed to assign issue {}".format(assignAnswer))
+    
+    def unassignIssue(self, issueId):
+        answer = self.requestFactory.put(self._apiPutAssignIssue(issueId, "0")).json()
+        if "id" not in answer:
+            printer.out("Failed to unassign {}".format(answer))
+
+
+    def _apiGetProjectBoards(self):
+       return self.address + "/boards"
+
+    def _apiGetIssueById(self, issueId, opened):
+        op = ""
+        if opened:
+            op = "?state=opened"
+        return self.address + "/issues/{}{}".format(issueId, op)
+
+    def _apiPutLabelsToIssue(self, issueIid, labelsArray):
+        return self.address + "/issues/{}?labels={}".format(issueIid, ",".join(labelsArray))
+
+    def _apiGetUsersByName(self, userName):
+        return self.address + "/users?username={}".format(userName)
+
+    def _apiPutAssignIssue(self, issueId, userId):
+        return self.address + "/issues/{}?assignee_ids={}".format(issueId, userId)
+
+
 class BoardApi(Api):
 
     def _setup(self):
@@ -448,7 +579,8 @@ class BoardApi(Api):
         self._command = "board"
 
     def execute(self, args):
-        self.fetchParams(args)
+        if self.fetchParams(args):
+            return
         self.printBoard()
 
     def printBoard(self):
