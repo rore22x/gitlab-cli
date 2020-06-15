@@ -578,13 +578,44 @@ class IssueMoveApi(Api):
 class BoardApi(Api):
 
     def _setup(self):
-        self._params = [ApiArg("v"), ApiArg("id")]
+        self._params = [ApiArg("list", description = "list name", position = 0), \
+                        ApiArg("u", description = "username", position = 1)]
         self._command = "board"
 
     def execute(self, args):
         if self.fetchParams(args):
             return
-        self.printBoard()
+
+        printList = self._params[0].getValue()
+        if printList:
+            self._printList(self._params[0].getValue(), self._params[1].getValue())
+        else:
+            self.printBoard()
+
+    def _printList(self, labelName, username = None):
+        answer = self.requestFactory.get(self._apiGetIssueWithLabels([labelName]))
+        issues = answer.json()
+        
+        issueRows = []
+        for issue in issues:
+            issueId = issue["iid"]
+            issueTitle = issue["title"]
+            issueLabels = issue["labels"]
+            issueAssigns = issue["assignee"]
+            if issueAssigns is not None:
+                issueAssigns = issue["assignee"]["username"]
+
+            if username is not None:
+                if username != issueAssigns:
+                    continue
+            issueRows.append([issueId, issueTitle, issueLabels, issueAssigns])
+            
+        printer.out(tabulate(issueRows, headers=['id', 'title', 'labels', 'assigned to']))
+
+
+    def _apiGetIssueWithLabels(self, labels):
+        labels = ",".join(labels)
+        return self.address + "/issues?labels={}&state=opened".format(labels)
 
     def printBoard(self):
         boards = self.requestFactory.get(self._apiBoard()).json()
