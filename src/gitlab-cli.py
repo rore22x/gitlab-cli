@@ -86,10 +86,6 @@ class GitlabResources(object):
     def putLabelsToIssue(self, issueIid, labelsArray):
         return self.address + "/issues/{}?labels={}".format(issueIid, ",".join(labelsArray))
 
-
-    def getUsersByName(self, userName):
-        return self.address + "/users?username={}".format(userName)
-
     def putAssignIssue(self, issueId, userId):
         return self.address + "/issues/{}?assignee_ids={}".format(issueId, userId)
     
@@ -182,32 +178,6 @@ class GitLab(object):
         print("Set labels {}".format(labels))
         answer = self.requestFactory.put(self.res.putLabelsToIssue(issueId, labels))
         print(answer.json())
-            
-    def printTodos(self):
-        self.printPanel("Todo")
-        
-    def printWork(self):
-        self.printPanel("Work")
-        
-    def printPanel(self, labelName, username = None):
-        answer = self.requestFactory.get(self.res.getIssueWithLabels([labelName]))
-        issues = answer.json()
-        
-        issueRows = []
-        for issue in issues:
-            issueId = issue["iid"]
-            issueTitle = issue["title"]
-            issueLabels = issue["labels"]
-            issueAssigns = issue["assignee"]
-            if issueAssigns is not None:
-                issueAssigns = issue["assignee"]["username"]
-
-            if username is not None:
-                if username != issueAssigns:
-                    continue
-            issueRows.append([issueId, issueTitle, issueLabels, issueAssigns])
-            
-        print(tabulate(issueRows, headers=['id', 'title', 'labels', 'assigned to']))
         
     def assignToUser(self, issueId, userName):
         answer = self.requestFactory.get(self.res.getUsersByName(userName))
@@ -228,7 +198,6 @@ class GitLab(object):
         answer = self.requestFactory.put(self.res.putAssignIssue(issueId, "0"))
         print(answer.json())
         
-
         
     def printOpenMergeRequests(self):
         answer = self.requestFactory.get(self.res.getOpenMergeRequests()).json()
@@ -669,13 +638,7 @@ class Command(object):
         self.mapCommand(c, r)
     
     def mapCommand(self, command, args):
-        if command == "list":
-            assert len(args) >= 1, "list #labelname ?username"
-            if len(args) >= 2:
-                self.executer.printPanel(args[0], args[1])
-            else:
-                self.executer.printPanel(args[0])
-        elif command == "assign":
+        if command == "assign":
             assert len(args) >= 2, "assign #issue #username"
             self.executer.assignToUser(args[0], args[1])
         elif command == "unassign":
@@ -716,10 +679,8 @@ class Command(object):
         c += "#.. required parameter\n"
         c += "?.. optional parameter\n\n"
         c += "-h/help\n"
-        c += "list #labelname ?username  - list issues with #labelname by ?username \n"
         c += "assign #issue #username - assign #issue to #username\n"
         c += "unassign #issueId  - unassign all users from #issueId \n"
-        c += "pipes ?username  - list pipelines by #username\n"
         c += "mv #issue #labelname  - set #labelname to #issue\n"
         c += "delready #listname  - remove Ready label from list #listname \n"
         c += "mr ?mergeRequestId - (1) list all open merge requests. (2) show merge request with ?mergeRequestId\n"
