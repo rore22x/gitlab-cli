@@ -405,6 +405,8 @@ class Api(object):
             addition = ""
             if param.isRequired():
                 addition += "[Req]"
+            if param._position is not None:
+                addition += "[P{}]".format(param._position)
             args.append("{}{}[{}]".format(addition, param.getToken(), param.description()))
         printer.out(" -> {} {} - {}".format(self._command, args, self.helpText))
 
@@ -414,7 +416,8 @@ class Api(object):
 class PipelineApi(Api):
 
     def _setup(self):
-        self._params = [ApiArg("sort"), ApiArg("u", transform = "username", description="username")]
+        self._params = [ApiArg("u", transform = "username", description="username", position = 0), \
+                        ApiArg("sort", position = 1)]
         self._command = "pipes"
 
     def execute(self, args):
