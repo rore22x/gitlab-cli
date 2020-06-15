@@ -23,7 +23,7 @@ def createDeligator():
     executor = GitLab(requestFactory, resources)
 
     # init apis
-    apis = [BranchApi(), PipelineApi()]
+    apis = [BranchApi(), PipelineApi(), BoardApi()]
     address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
             configuration.getApiVersion(),\
             configuration.getProjectId())
@@ -55,6 +55,16 @@ class Configuration(object):
     def getProjectId(self):
         return self._projectId
 
+class Util(object):
+
+    def lineBreak(text, chars):
+        if type(text) is not str:
+            return text
+        for i in range(len(text)):
+            if i > 0 and i % chars == 0:
+                text = text[0:i] + "\n" + text[i:len(text)]
+                
+        return text
 
 class GitlabResources(object):
     
@@ -430,6 +440,51 @@ class BranchApi(Api):
 
     def api(self):
         return self.address + "/repository/branches{}".format(self.apiArgs())
+
+class BoardApi(Api):
+
+    def _setup(self):
+        self._params = [ApiArg("v"), ApiArg("id")]
+        self._command = "board"
+
+    def execute(self, args):
+        self.fetchParams(args)
+        self.printBoard()
+
+    def printBoard(self):
+        boards = self.requestFactory.get(self._apiBoard()).json()
+
+        for board in boards:
+            lists = board["lists"]
+            boardTable = []
+            maxSize = 0
+            listNames = []
+            for listItem in lists:
+                listName = listItem["label"]["name"]
+                listNames.append(listName)
+                issueList = self.getIssuesByLabel(listName)
+                boardTable.append(issueList)
+                if len(issueList) > maxSize:
+                    maxSize = len(issueList)
+            rows = []
+            for i in range(maxSize):
+                row = []
+                for column in boardTable:
+                    if len(column) > i:
+                        row.append(Util.lineBreak(column[i], 30))
+                    else:
+                        row.append("-")
+                rows.append(row)
+            printer.out("----------\nBoard: {}\n----------".format(board["id"]))
+            printer.out(tabulate(rows, headers = listNames))
+
+    def getIssuesByLabel(self, labelName):
+        issues = self.requestFactory.get(self.address + "/issues?labels={}".format(labelName)).json()
+        issues = ["({}): {}".format(issue["id"], issue["title"]) for issue in issues]
+        return issues
+
+    def _apiBoard(self):
+        return self.address + "/boards"
 
 
 class Command(object):
