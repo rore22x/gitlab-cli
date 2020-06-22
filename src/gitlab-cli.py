@@ -8,9 +8,11 @@ import urllib
 import datetime
 import sys
 import json
+import os
 from tabulate import tabulate
 
-
+# Read configuration.json from environment variable GITLAB_CONFIG
+ENV_VARIABLE_NAME = "GITLAB_CONFIG"
 
 def main(args):
     d = createDeligator()
@@ -36,7 +38,10 @@ def createDeligator():
 class Configuration(object):
     
     def __init__(self):
-        with open("./configuration.json", "r") as file:
+        configFile = "./configuration.json"
+        if ENV_VARIABLE_NAME in os.environ:
+            configFile = os.environ[ENV_VARIABLE_NAME]
+        with open(configFile, "r") as file:
             jFile = json.load(file)
             self._accessToken = jFile["access-token"]
             self._gitlabHost = jFile["host"]
