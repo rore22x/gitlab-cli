@@ -504,7 +504,7 @@ class IssueMoveApi(Api):
         setLabelsAnswer = self.requestFactory.put(self._apiPutLabelsToIssue(issueId, labels)).json()
         if "id" not in setLabelsAnswer:
             printer.out("Failed to move issue {}".format(setLabelsAnswer))
-        return setLabelsAnswer["id"]
+        return setLabelsAnswer["iid"]
             
     def assignToUser(self, issueId, userName):
         answer = self.requestFactory.get(self._apiGetUsersByName(userName))
@@ -519,7 +519,7 @@ class IssueMoveApi(Api):
         if foundUser is None:
             printer.out("User not found: '{}' registered?".format(userName))
             return
-            
+        
         assignAnswer = self.requestFactory.put(self._apiPutAssignIssue(issueId, foundUser["id"])).json()
         if "id" not in assignAnswer:
             printer.out("Failed to assign issue {}".format(assignAnswer))
