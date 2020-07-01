@@ -9,6 +9,7 @@ import datetime
 import sys
 import json
 import os
+import pdb
 from tabulate import tabulate
 
 # Read configuration.json from environment variable GITLAB_CONFIG
@@ -271,6 +272,24 @@ class Printer(object):
         print(message)
 
 
+class Paginator(object):
+
+    def fetchAll(requestFactory, apiRequest):
+        answer = requestFactory.get(apiRequest)
+        totalPages = int(answer.headers["X-Total-Pages"])
+        currentPage = int(answer.headers["X-Page"])
+        totalElements = int(answer.headers["X-Total"])
+
+        resultElements = [e for e in answer.json()]
+
+        for page in range(currentPage, totalPages):
+            page += 1
+            pagination = "&page={}".format(page)
+            answer = requestFactory.get(apiRequest + pagination)
+            [resultElements.append(e) for e in answer.json()]
+        return resultElements
+
+
 class ApiArg(object):
 
     def getArgToken():
@@ -391,22 +410,30 @@ class PipelineApi(Api):
 
     def _setup(self):
         self._params = [ApiArg("u", transform = "username", description="username", position = 0), \
-                        ApiArg("sort", position = 1)]
+                        ApiArg("sort", position = 1),
+                        ApiArg("n", description="number of entries", position = 2)]
         self._command = "pipes"
+
+    def testPip(self):
+        return {"id": 2, "status": "good", "ref": "pi", "web_url": "test"}
 
     def execute(self, args):
         if self.fetchParams(args):
             return
         answer = self.requestFactory.get(self.getPipelines())
 
+        numberOfEntries = self._params[2].getValue()
+
         pipelines = answer.json()
         rows = []
-        for pip in pipelines:
+        for index, pip in enumerate(pipelines):
             pipId = pip["id"]
             pipStatus = pip["status"]
             pipRef = pip["ref"]
             pipUrl = pip["web_url"]
             rows.append([pipId, pipStatus, pipRef, pipUrl])
+            if numberOfEntries is not None and (index + 1) == int(numberOfEntries):
+                break
         printer.out(tabulate(rows, headers=['id', 'status', 'ref', 'url']))
 
     def getPipelines(self):
@@ -567,8 +594,7 @@ class BoardApi(Api):
             self.printBoard()
 
     def _printList(self, labelName, username = None):
-        answer = self.requestFactory.get(self._apiGetIssueWithLabels([labelName]))
-        issues = answer.json()
+        issues = Paginator.fetchAll(self.requestFactory, self._apiGetIssueWithLabels([labelName]))
         
         issueRows = []
         for issue in issues:
