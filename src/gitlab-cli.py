@@ -253,7 +253,7 @@ class GitLab(object):
     
     def printIssue(self, issueId):
         answer = self.requestFactory.get(self.res.getIssueById(issueId, False)).json()
-        notes = self.requestFactory.get(self.res.getIssueNotes(issueId)).json()
+        notes = Paginator.fetchAll(self.requestFactory, self.res.getIssueNotes(issueId))
         
         description = answer["description"] 
         labels = answer["labels"]
