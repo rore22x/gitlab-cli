@@ -919,7 +919,6 @@ class Command(object):
         c += "unassign #issueId  - unassign all users from #issueId \n"
         c += "mv #issue #labelname  - set #labelname to #issue\n"
         c += "delready #listname  - remove Ready label from list #listname \n"
-        c += "mr ?mergeRequestId - (1) list all open merge requests. (2) show merge request with ?mergeRequestId\n"
         print(c)
         for api in self.apis:
             api.help()
