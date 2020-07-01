@@ -27,7 +27,7 @@ def createDeligator():
     executor = GitLab(requestFactory, resources)
 
     # init apis
-    apis = [BranchApi(), PipelineApi(), BoardApi(), IssueMoveApi(), IssueApi()]
+    apis = [BranchApi(), PipelineApi(), BoardApi(), IssueMoveApi(), IssueApi(), MergeRequestApi()]
     address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
             configuration.getApiVersion(),\
             configuration.getProjectId())
@@ -105,15 +105,6 @@ class GitlabResources(object):
     def getProjectBoards(self):
         return self.address + "/boards"
     
-    def getOpenMergeRequests(self):
-        return self.address + "/merge_requests?state=opened"
-    
-    def getMergeRequestNotes(self, mrId):
-        return self.address + "/merge_requests/{}/notes?sort=asc&order_by=updated_at".format(mrId)
-    
-    def getMergeRequest(self, mrId):
-        return self.address + "/merge_requests/{}".format(mrId)
-    
     def getIssueNotes(self, issueId):
         return self.address + "/issues/{}/notes?sort=asc".format(issueId)
 
@@ -128,6 +119,15 @@ class Utils(object):
         for key in jsonDict:
             result[key] = Utils.encode(jsonDict[key])
         return result
+
+    def lineBreak(text, chars):
+        if type(text) is not str:
+            return text
+        for i in range(len(text)):
+            if i > 0 and i % chars == 0:
+                text = text[0:i] + "\n" + text[i:len(text)]
+                
+        return text
 
 class RequestFactory(object):
 
@@ -483,13 +483,13 @@ class IssueApi(Api):
             for note in notes:
                 author = note["author"]["username"]
                 body = note["body"]
-                print("--------\nauthor {}: {}".format(author, body))
+                printer.out("--------\nauthor {}: {}".format(author, body))
 
         description = answer["description"] 
         labels = answer["labels"]
-        print("* Description: {}".format(description))
-        print("* Lables: {}".format(labels))
-        print("* State: {}".format(answer["state"]))
+        printer.out("* Description: {}".format(description))
+        printer.out("* Lables: {}".format(labels))
+        printer.out("* State: {}".format(answer["state"]))
 
     def _postIssueNote(self, issueId):
         return self.address + "/issues/{}/notes".format(issueId)
@@ -503,6 +503,126 @@ class IssueApi(Api):
 
     def _getIssueNotes(self, issueId):
         return self.address + "/issues/{}/notes?sort=asc".format(issueId)
+
+class StringBuilder(object):
+
+    def __init__(self):
+        self.stub = ""
+
+    def append(self, text):
+        self.stub += "\n{}".format(text)
+
+    def toString(self):
+        return self.stub
+
+class MergeRequestApi(Api):
+
+    def _setup(self):
+        self._params = [ApiArg("iid", description="id of MR", position = 0), \
+                        ApiArg("a", description="add note", position = 1), \
+                        ApiArg("d", description="print discussion", position = 2) \
+                        ]
+        self._command = "mr"
+
+    def execute(self, args):
+        if self.fetchParams(args):
+            return
+
+        mrId = self._params[0].getValue()
+
+        if mrId is not None:
+            self.printMergeRequest(mrId)
+        else:
+            self.printOpenMergeRequests()
+
+    def printOpenMergeRequests(self):
+        answer = self.requestFactory.get(self._getOpenMergeRequests()).json()
+        
+        rows = []
+        for mr in answer:
+            iid = mr["iid"]
+            title = mr["title"]
+            title = Utils.lineBreak(title, 30)
+            sourceBranch = mr["source_branch"]
+            author = mr["author"]["username"]
+            workInProgress = mr["work_in_progress"]
+            mergeStatus = mr["merge_status"]
+            webUrl = mr["web_url"]
+            upVotes = mr["upvotes"]
+            userNotesCount = mr["user_notes_count"]
+            row = [iid, upVotes, title, author, userNotesCount, workInProgress, mergeStatus, webUrl]
+            rows.append(row)
+        
+        printer.out(tabulate(rows, headers=["id", "👍", "title", "auth", "n", "wip" , "status", "url"], tablefmt="simple"))
+
+    def printMergeRequest(self, mrId):
+        answer = self.requestFactory.get(self._getMergeRequest(mrId)).json()
+        title = answer["title"]
+        description = answer["description"]
+        author = answer["author"]["username"]
+        upVotes = answer["upvotes"]
+        mergeStatus = answer["merge_status"]
+        workInProgress = answer["work_in_progress"]
+        
+        printer.out("Title: {},\nDescription: {},\nAuthor: {},\nUpvotes: {},\nMR-Status: {},\nWIP: {}".format(title, description, author, upVotes, mergeStatus, workInProgress))
+
+        discussions = Paginator.fetchAll(self.requestFactory, self._getMergeRequestDiscussion(mrId))
+        for discussion in discussions:
+            builder = StringBuilder()
+            notes = discussion["notes"]
+            sumResolved = 0
+            sumResolvable = 0
+
+            for note in notes:
+                author = note["author"]["username"]
+                body = note["body"]
+                if "resolved" in note:
+                    sumResolvable += 1
+                    resolved = note["resolved"]
+                    if resolved:
+                        sumResolved += 1
+                updated_at = note["updated_at"]
+
+                prefix = "    ({}): ".format(author)
+                body = self.setSpaces(body, len(prefix))
+                builder.append("{}{}".format(prefix, body))
+
+            resolvable = sumResolvable > 0 
+            allResolved = sumResolved == sumResolvable
+            resolveStatus = " - resolved {}".format(allResolved) if resolvable  else ""
+
+            if resolvable:
+                printer.out("Discussion {}:\n{}\n".format(resolveStatus, builder.toString()))
+            else:
+                continue
+
+            #user_input = input("command (a - answer, n - next discussion)")
+            #if user_input == "n":
+            #    continue
+            #elif user_input == "a":
+            #    answer = input("Answer: ")
+        # TODO thumbs up
+        # TODO Input discussions
+
+    def setSpaces(self, text, spaces):
+        spaces = [" " for i in range(spaces)]
+        spaces = "".join(spaces)
+        text = text.split("\n")
+        for i in range(1, len(text)):
+            text[i] = spaces + text[i]
+        return "\n".join(text)
+
+    def _getOpenMergeRequests(self):
+        return self.address + "/merge_requests?state=opened"
+    
+    def _getMergeRequestNotes(self, mrId):
+        return self.address + "/merge_requests/{}/notes?sort=asc&order_by=updated_at".format(mrId)
+
+    def _getMergeRequestDiscussion(self, mrId):
+        return self.address + "/merge_requests/{}/discussions".format(mrId)
+    
+    def _getMergeRequest(self, mrId):
+        return self.address + "/merge_requests/{}".format(mrId)
 
 class BranchApi(Api):
 
@@ -746,11 +866,6 @@ class Command(object):
         elif command == "delready":
             assert len(args) >= 1, "delready #listname"
             self.executer.removeReadyLabel(args[0])
-        elif command == "mr":
-            if len(args) >= 1:
-                self.executer.printMergeRequest(args[0])
-            else:
-                self.executer.printOpenMergeRequests()
         elif command == "-h" or command == "help":
             self.overview()
         elif self.mapApi(command, args):
