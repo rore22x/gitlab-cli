@@ -568,41 +568,63 @@ class MergeRequestApi(Api):
 
         discussions = Paginator.fetchAll(self.requestFactory, self._getMergeRequestDiscussion(mrId))
         for discussion in discussions:
-            builder = StringBuilder()
-            notes = discussion["notes"]
-            sumResolved = 0
-            sumResolvable = 0
-
-            for note in notes:
-                author = note["author"]["username"]
-                body = note["body"]
-                if "resolved" in note:
-                    sumResolvable += 1
-                    resolved = note["resolved"]
-                    if resolved:
-                        sumResolved += 1
-                updated_at = note["updated_at"]
-
-                prefix = "    ({}): ".format(author)
-                body = self.setSpaces(body, len(prefix))
-                builder.append("{}{}".format(prefix, body))
-
-            resolvable = sumResolvable > 0 
-            allResolved = sumResolved == sumResolvable
-            resolveStatus = " - resolved {}".format(allResolved) if resolvable  else ""
-
-            if resolvable:
-                printer.out("Discussion {}:\n{}\n".format(resolveStatus, builder.toString()))
-            else:
+            discussionId = discussion["id"]
+            command = self.printSingleDiscussion(mrId, discussion)
+            if command == "continue":
                 continue
-
-            #user_input = input("command (a - answer, n - next discussion)")
-            #if user_input == "n":
-            #    continue
-            #elif user_input == "a":
-            #    answer = input("Answer: ")
+            elif command == "break":
+                break
         # TODO thumbs up
-        # TODO Input discussions
+
+    def printSingleDiscussion(self, mrId, discussion = None, discussionId = None):
+        if discussionId is not None:
+            discussion = self.requestFactory.get(self._getDiscussion(mrId, discussionId)).json()
+        builder = StringBuilder()
+        notes = discussion["notes"]
+        discussionId = discussion["id"]
+        sumResolved = 0
+        sumResolvable = 0
+
+        for note in notes:
+            author = note["author"]["username"]
+            body = note["body"]
+            body = body.replace(":thumbsup:", "👍")
+            if "resolved" in note:
+                sumResolvable += 1
+                resolved = note["resolved"]
+                if resolved:
+                    sumResolved += 1
+            updated_at = note["updated_at"]
+
+            prefix = "    ({}): ".format(author)
+            body = self.setSpaces(body, len(prefix))
+            builder.append("{}{}".format(prefix, body))
+
+        resolvable = sumResolvable > 0 
+        allResolved = sumResolved == sumResolvable
+        resolveStatus = " - resolved {}".format(allResolved) if resolvable  else ""
+
+        if resolvable:
+            printer.out("\n# Discussion {}:\n{}\n".format(resolveStatus, builder.toString()))
+        else:
+            return "continue"
+  
+        user_input = input("command (a - answer, n/[space] - next discussion, s - skip all)")
+        if user_input == "n" or len(user_input) == 0:
+            return "continue"
+        elif user_input == "a":
+            answer = input("Answer: ")
+            if len(answer) > 0:
+                response = self.requestFactory.post(self._postAnswerDiscussion(mrId, discussionId), {"body": answer}).json()
+                if "body" in response:
+                    printer.out("Success:\n{}\n\n".format(response["body"]))
+                    self.printSingleDiscussion(mrId, discussionId = discussionId)
+                else:
+                    printer.out("Error...\n\n")
+        elif user_input == "s":
+            return "break"
+
+        return ""
 
     def setSpaces(self, text, spaces):
         spaces = [" " for i in range(spaces)]
@@ -611,6 +633,12 @@ class MergeRequestApi(Api):
         for i in range(1, len(text)):
             text[i] = spaces + text[i]
         return "\n".join(text)
+
+    def _postAnswerDiscussion(self, mrId, discussionId):
+        return self.address + "/merge_requests/{}/discussions/{}/notes".format(mrId, discussionId)
+
+    def _getDiscussion(self, mrId, discussionId):
+        return self.address + "/merge_requests/{}/discussions/{}".format(mrId, discussionId)
 
     def _getOpenMergeRequests(self):
         return self.address + "/merge_requests?state=opened"
