@@ -9,3 +9,6 @@
 /configuration.json
 /todo.md
 
+*.sublime-workspace
+*.sublime-project
+
