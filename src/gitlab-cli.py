@@ -10,6 +10,7 @@ import sys
 import json
 import os
 import pdb
+import urllib.parse
 from tabulate import tabulate
 
 # Read configuration.json from environment variable GITLAB_CONFIG
@@ -26,7 +27,7 @@ def createDeligator():
     executor = GitLab(requestFactory, resources)
 
     # init apis
-    apis = [BranchApi(), PipelineApi(), BoardApi(), IssueMoveApi()]
+    apis = [BranchApi(), PipelineApi(), BoardApi(), IssueMoveApi(), IssueApi()]
     address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
             configuration.getApiVersion(),\
             configuration.getProjectId())
@@ -117,6 +118,17 @@ class GitlabResources(object):
         return self.address + "/issues/{}/notes?sort=asc".format(issueId)
 
 
+class Utils(object):
+
+    def encode(text):
+        return urllib.parse.quote(text)
+
+    def jsonDump(jsonDict):
+        result = {}
+        for key in jsonDict:
+            result[key] = Utils.encode(jsonDict[key])
+        return result
+
 class RequestFactory(object):
 
     def __init__(self, configuration):
@@ -124,11 +136,11 @@ class RequestFactory(object):
 
     def get(self, endpoint):
         print(endpoint)
-        r = requests.get(url = endpoint,                headers = {'private-token': '{}'.format(self.config.getToken())})
+        r = requests.get(url = endpoint, headers = {'private-token': '{}'.format(self.config.getToken())})
         return r
 
-    def post(self, endpoint, requestData):
-        r = requests.post(url = endpoint, data = urllib.parse.urlencode(requestData),         headers = {'private-token': '{}'.format(self.config.getToken())})
+    def post(self, endpoint, requestDataDict):
+        r = requests.post(url = endpoint, data = requestDataDict, headers = {'private-token': '{}'.format(self.config.getToken())})
         return r
     
     def put(self, endpoint):
@@ -263,6 +275,7 @@ class GitLab(object):
         for note in notes:
             author = note["author"]["username"]
             body = note["body"]
+            pdb.set_trace()
             print("--------\nauthor {}: {}".format(author, body))
 
 
@@ -438,6 +451,58 @@ class PipelineApi(Api):
 
     def getPipelines(self):
         return self.address + "/pipelines{}".format(self.apiArgs())
+
+class IssueApi(Api):
+
+    def _setup(self):
+        self._params = [ApiArg("iid", description="id of issue", required = True, position = 0), \
+                        ApiArg("a", description="add note", position = 1), \
+                        ApiArg("d", description="print discussion", position = 2) \
+                        ]
+        self._command = "issue"
+
+    def execute(self, args):
+        if self.fetchParams(args):
+            return
+
+        issueId = self._params[0].getValue()
+        addNote = self._params[1].getValue()
+        printDiscussion = self._params[2].getValue()
+
+        answer = self.requestFactory.get(self._getIssueById(issueId, False)).json()
+
+        if addNote is not None:
+            noteToAdd = input("Add a discussion note to issue \"{}\":\n>".format(answer["title"]))
+            printer.out("Discussion note:\n\"{}\"".format(noteToAdd))
+
+            self.requestFactory.post(self._postIssueNote(issueId), {"body": noteToAdd})
+
+        if printDiscussion is not None:
+            notes = Paginator.fetchAll(self.requestFactory, self._getIssueNotes(issueId))
+            
+            for note in notes:
+                author = note["author"]["username"]
+                body = note["body"]
+                print("--------\nauthor {}: {}".format(author, body))
+
+        description = answer["description"] 
+        labels = answer["labels"]
+        print("* Description: {}".format(description))
+        print("* Lables: {}".format(labels))
+        print("* State: {}".format(answer["state"]))
+
+    def _postIssueNote(self, issueId):
+        return self.address + "/issues/{}/notes".format(issueId)
+
+    def _getIssueById(self, issueId, opened):
+        op = ""
+        if opened:
+            op = "?state=opened"
+        return self.address + "/issues/{}{}".format(issueId, op)
+
+
+    def _getIssueNotes(self, issueId):
+        return self.address + "/issues/{}/notes?sort=asc".format(issueId)
 
 class BranchApi(Api):
 
@@ -686,9 +751,6 @@ class Command(object):
                 self.executer.printMergeRequest(args[0])
             else:
                 self.executer.printOpenMergeRequests()
-        elif command == "issue":
-            assert len(args) >= 1, "issue #issueId"
-            self.executer.printIssue(args[0])
         elif command == "-h" or command == "help":
             self.overview()
         elif self.mapApi(command, args):
