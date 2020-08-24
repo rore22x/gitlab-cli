@@ -458,7 +458,8 @@ class IssueApi(Api):
     def _setup(self):
         self._params = [ApiArg("iid", description="id of issue", required = True, position = 0), \
                         ApiArg("a", description="add note", position = 1), \
-                        ApiArg("d", description="print discussion", position = 2) \
+                        ApiArg("d", description="print discussion", position = 2), \
+                        ApiArg("close", description="close issue", position = 3) \
                         ]
         self._command = "issue"
 
@@ -469,8 +470,15 @@ class IssueApi(Api):
         issueId = self._params[0].getValue()
         addNote = self._params[1].getValue()
         printDiscussion = self._params[2].getValue()
+        closeIssue = self._params[3].getValue()
+
 
         answer = self.requestFactory.get(self._getIssueById(issueId, False)).json()
+
+        if closeIssue is not None:
+            printer.out("Try to close issue")
+            self.requestFactory.put(self._closeIssue(issueId))
+            answer = self.requestFactory.get(self._getIssueById(issueId, False)).json()
 
         if addNote is not None:
             noteToAdd = input("Add a discussion note to issue \"{}\":\n>".format(answer["title"]))
@@ -500,6 +508,9 @@ class IssueApi(Api):
         if opened:
             op = "?state=opened"
         return self.address + "/issues/{}{}".format(issueId, op)
+
+    def _closeIssue(self, issueId):
+        return self.address + "/issues/{}?state_event=close".format(issueId)
 
 
     def _getIssueNotes(self, issueId):
