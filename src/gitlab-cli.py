@@ -27,7 +27,7 @@ def createDeligator():
     executor = GitLab(requestFactory, resources)
 
     # init apis
-    apis = [BranchApi(), PipelineApi(), BoardApi(), IssueMoveApi(), IssueApi(), MergeRequestApi()]
+    apis = [BranchApi(), PipelineApi(), BoardApi(), IssueMoveApi(), IssueApi(), MergeRequestApi(), LabelsApi()]
     address = "{}/api/{}/projects/{}".format(configuration.getHostAddress(),\
             configuration.getApiVersion(),\
             configuration.getProjectId())
@@ -193,6 +193,7 @@ class GitLab(object):
                 labels.remove(panelLabel)
         
         labels.append(labelName)  
+        labels = [Utils.encode(x) for x in labels]
         print("Set labels {}".format(labels))
         answer = self.requestFactory.put(self.res.putLabelsToIssue(issueId, labels))
         print(answer.json())
@@ -679,6 +680,66 @@ class BranchApi(Api):
     def api(self):
         return self.address + "/repository/branches{}".format(self.apiArgs())
 
+class LabelsApi(Api):
+
+    def _setup(self):
+        self._params = [ApiArg("o", description = "operation", position = 0, required = True), \
+                        ApiArg("id", description = "issue id", position = 1, required = True), \
+                        ApiArg("name", description =  "label name", position = 2, required = True)]
+        self._command = "lab"
+        self.addHelp("Add/remove labels")
+
+    def execute(self, args):
+        if self.fetchParams(args):
+            return
+
+        operation = self._params[0].getValue()
+        issueId = self._params[1].getValue()
+        labelName = self._params[2].getValue()
+
+        splitted = labelName.split(",")
+        splitted = [x.strip() for x in splitted]
+
+        if not (operation == "add" or operation == "rm"):
+            return printer.out("Operation not supported {}. Supported operations: add/rm".format(operation))
+
+        # Get labels for issue
+        issueAnswer = self.requestFactory.get(self._apiGetIssueById(issueId, True)).json()
+        if "labels" not in issueAnswer:
+            printer.out("Failed to get labels for issue {}: {}".format(issueId, issueAnswer))
+            return
+
+        labels = issueAnswer["labels"]
+        printer.out("Current labels {}".format(labels))
+        if(operation == "add"):
+            [labels.append(x) for x in splitted]
+        elif operation == "rm":
+            [labels.remove(x) for x in splitted]
+
+        setLabelsAnswer = self.requestFactory.put(self._apiPutLabelsToIssue(issueId, labels)).json()
+        if "id" not in setLabelsAnswer:
+            printer.out("Failed to move issue {}".format(setLabelsAnswer))
+
+        idFromAnswer = setLabelsAnswer["iid"]
+
+        issueAnswer = self.requestFactory.get(self._apiGetIssueById(idFromAnswer, True)).json()
+        if "id" in issueAnswer:
+            title = issueAnswer["title"]
+            labels = issueAnswer["labels"]
+            assignees = [assignee["username"] for assignee in issueAnswer["assignees"]]
+            printer.out("Issue: {}\n -> labels: {}\n -> assignees: {}".format(title, labels, assignees))
+
+    def _apiGetIssueById(self, issueId, opened):
+        op = ""
+        if opened:
+            op = "?state=opened"
+        return self.address + "/issues/{}{}".format(issueId, op)
+
+    def _apiPutLabelsToIssue(self, issueIid, labelsArray):
+        labelsArray = [Utils.encode(e) for e in labelsArray]
+        serializedLables = ",".join(labelsArray)
+        return self.address + "/issues/{}?labels={}".format(issueIid, serializedLables)
+
 class IssueMoveApi(Api):
 
     def _setup(self):
@@ -736,11 +797,15 @@ class IssueMoveApi(Api):
             return
 
         labels = issueAnswer["labels"]
+        numberOfLabelsBefore = len(labels)
         for panelLabel in allLabels:
             if panelLabel in labels:
                 labels.remove(panelLabel)
+
         
         labels.append(labelName)  
+        assert numberOfLabelsBefore == len(labels)
+        printer.out("Set labels {}".format(labels))
         setLabelsAnswer = self.requestFactory.put(self._apiPutLabelsToIssue(issueId, labels)).json()
         if "id" not in setLabelsAnswer:
             printer.out("Failed to move issue {}".format(setLabelsAnswer))
@@ -780,7 +845,9 @@ class IssueMoveApi(Api):
         return self.address + "/issues/{}{}".format(issueId, op)
 
     def _apiPutLabelsToIssue(self, issueIid, labelsArray):
-        return self.address + "/issues/{}?labels={}".format(issueIid, ",".join(labelsArray))
+        labelsArray = [Utils.encode(e) for e in labelsArray]
+        serializedLables = ",".join(labelsArray)
+        return self.address + "/issues/{}?labels={}".format(issueIid, serializedLables)
 
     def _apiGetUsersByName(self, userName):
         return self.address + "/users?username={}".format(userName)
